@@ -1,15 +1,18 @@
 import SwiftUI
+import CoreBluetooth
+import UniformTypeIdentifiers
+
+// MARK: - Main Content View
 
 struct ContentView: View {
-    @StateObject private var client = NinePClient()
-    @State private var showingConnection = true
+    @StateObject private var viewModel = NinePViewModel()
 
     var body: some View {
         Group {
-            if showingConnection {
-                ConnectionView(client: client, showingConnection: $showingConnection)
+            if viewModel.showingConnection {
+                ConnectionView(viewModel: viewModel)
             } else {
-                FileBrowserView(client: client, showingConnection: $showingConnection)
+                FileBrowserView(viewModel: viewModel)
             }
         }
     }
@@ -18,19 +21,7 @@ struct ContentView: View {
 // MARK: - Connection View
 
 struct ConnectionView: View {
-    @ObservedObject var client: NinePClient
-    @Binding var showingConnection: Bool
-
-    @State private var connectionMode: ConnectionMode = .bluetooth
-    @StateObject private var l2capTransport = L2CAPTransport()
-    @State private var tcpHost = "192.168.1.100"
-    @State private var tcpPort = "564"
-    @State private var isConnecting = false
-    @State private var errorMessage: String?
-
-    enum ConnectionMode {
-        case bluetooth, network
-    }
+    @ObservedObject var viewModel: NinePViewModel
 
     var body: some View {
         NavigationView {
@@ -52,23 +43,23 @@ struct ConnectionView: View {
                 Spacer()
 
                 // Connection mode picker
-                Picker("Connection", selection: $connectionMode) {
+                Picker("Connection", selection: $viewModel.connectionMode) {
                     Label("Bluetooth", systemImage: "antenna.radiowaves.left.and.right")
-                        .tag(ConnectionMode.bluetooth)
+                        .tag(NinePViewModel.ConnectionMode.bluetooth)
                     Label("Network", systemImage: "network")
-                        .tag(ConnectionMode.network)
+                        .tag(NinePViewModel.ConnectionMode.network)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
 
                 // Connection details
-                if connectionMode == .bluetooth {
+                if viewModel.connectionMode == .bluetooth {
                     bluetoothView
                 } else {
                     networkView
                 }
 
-                if let error = errorMessage {
+                if let error = viewModel.connectionError {
                     Text(error)
                         .foregroundColor(.red)
                         .font(.caption)
@@ -83,18 +74,39 @@ struct ConnectionView: View {
 
     private var bluetoothView: some View {
         VStack(spacing: 20) {
-            if l2capTransport.discoveredPeripherals.isEmpty {
+            // Scan button
+            Button(action: {
+                if viewModel.l2capTransport.isScanning {
+                    viewModel.l2capTransport.stopScanning()
+                } else {
+                    viewModel.l2capTransport.startScanning()
+                }
+            }) {
+                HStack {
+                    Image(systemName: viewModel.l2capTransport.isScanning ? "stop.circle" : "antenna.radiowaves.left.and.right")
+                    Text(viewModel.l2capTransport.isScanning ? "Stop Scanning" : "Start Scanning")
+                        .fontWeight(.semibold)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(viewModel.l2capTransport.isScanning ? Color.red : Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(10)
+            }
+            .padding(.horizontal)
+
+            if viewModel.l2capTransport.discoveredPeripherals.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.system(size: 48))
                         .foregroundColor(.gray)
-                    Text(l2capTransport.isScanning ? "Scanning..." : "No devices found")
+                    Text(viewModel.l2capTransport.isScanning ? "Scanning..." : "No devices found")
                         .foregroundColor(.secondary)
                 }
                 .frame(height: 200)
             } else {
-                List(l2capTransport.discoveredPeripherals, id: \.identifier) { peripheral in
-                    Button(action: { connectBluetooth(peripheral) }) {
+                List(viewModel.l2capTransport.discoveredPeripherals, id: \.identifier) { peripheral in
+                    Button(action: { viewModel.connectBluetooth(peripheral) }) {
                         HStack {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                                 .foregroundColor(.blue)
@@ -106,159 +118,88 @@ struct ConnectionView: View {
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
-                            if isConnecting {
+                            if viewModel.isConnecting {
                                 ProgressView()
                             }
                         }
                     }
-                    .disabled(isConnecting)
+                    .disabled(viewModel.isConnecting)
                 }
-                .frame(height: 200)
-                .listStyle(.plain)
+                .frame(height: 300)
             }
-
-            Button(action: {
-                if l2capTransport.isScanning {
-                    l2capTransport.stopScanning()
-                } else {
-                    l2capTransport.startScanning()
-                }
-            }) {
-                Label(
-                    l2capTransport.isScanning ? "Stop Scanning" : "Scan for Devices",
-                    systemImage: l2capTransport.isScanning ? "stop.circle.fill" : "magnifyingglass"
-                )
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(l2capTransport.isScanning ? Color.red : Color.blue)
-                .foregroundColor(.white)
-                .cornerRadius(10)
-            }
-            .padding(.horizontal)
-            .disabled(isConnecting)
         }
+        .padding()
     }
 
     private var networkView: some View {
-        VStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Server Address")
-                    .font(.headline)
+        VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Hostname / IP")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField("192.168.1.100", text: $viewModel.tcpHost)
+                    .textFieldStyle(.roundedBorder)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+            }
 
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Port")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField("564", text: $viewModel.tcpPort)
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.decimalPad)
+                    .autocapitalization(.none)
+            }
+
+            Button(action: { viewModel.connectNetwork() }) {
                 HStack {
-                    TextField("IP Address", text: $tcpHost)
-                        .textFieldStyle(.roundedBorder)
-                        .keyboardType(.decimalPad)
-                        .autocapitalization(.none)
-
-                    Text(":")
-                        .foregroundColor(.secondary)
-
-                    TextField("Port", text: $tcpPort)
-                        .textFieldStyle(.roundedBorder)
-                        .keyboardType(.numberPad)
-                        .frame(width: 80)
+                    if viewModel.isConnecting {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    } else {
+                        Image(systemName: "network")
+                    }
+                    Text(viewModel.isConnecting ? "Connecting..." : "Connect")
+                        .fontWeight(.semibold)
                 }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(10)
             }
-            .padding(.horizontal)
-
-            Button(action: connectNetwork) {
-                if isConnecting {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                } else {
-                    Label("Connect", systemImage: "link")
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(Color.blue)
-            .foregroundColor(.white)
-            .cornerRadius(10)
-            .padding(.horizontal)
-            .disabled(isConnecting)
+            .disabled(viewModel.isConnecting)
         }
-    }
-
-    private func connectBluetooth(_ peripheral: CBPeripheral) {
-        isConnecting = true
-        errorMessage = nil
-
-        l2capTransport.selectPeripheral(peripheral)
-
-        Task {
-            do {
-                try await client.connect(transport: l2capTransport)
-                await MainActor.run {
-                    showingConnection = false
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isConnecting = false
-                }
-            }
-        }
-    }
-
-    private func connectNetwork() {
-        guard let port = UInt16(tcpPort) else {
-            errorMessage = "Invalid port number"
-            return
-        }
-
-        isConnecting = true
-        errorMessage = nil
-
-        let tcpTransport = TCPTransport(host: tcpHost, port: port)
-
-        Task {
-            do {
-                try await client.connect(transport: tcpTransport)
-                await MainActor.run {
-                    showingConnection = false
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isConnecting = false
-                }
-            }
-        }
+        .padding()
     }
 }
 
 // MARK: - File Browser View
 
 struct FileBrowserView: View {
-    @ObservedObject var client: NinePClient
-    @Binding var showingConnection: Bool
-
-    @State private var currentPath = "/"
-    @State private var entries: [FileEntry] = []
-    @State private var isLoading = false
-    @State private var selectedFile: FileEntry?
-    @State private var pathComponents: [String] = []
+    @ObservedObject var viewModel: NinePViewModel
 
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
                 // Path breadcrumb
-                if !pathComponents.isEmpty {
+                if !viewModel.pathComponents.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 4) {
-                            Button(action: { navigateToRoot() }) {
+                            Button(action: { viewModel.navigateToRoot() }) {
                                 Image(systemName: "house.fill")
                                     .foregroundColor(.blue)
                             }
 
-                            ForEach(pathComponents.indices, id: \.self) { index in
+                            ForEach(viewModel.pathComponents.indices, id: \.self) { index in
                                 Image(systemName: "chevron.right")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
 
-                                Button(action: { navigateTo(index: index) }) {
-                                    Text(pathComponents[index])
+                                Button(action: { viewModel.navigateTo(index: index) }) {
+                                    Text(viewModel.pathComponents[index])
                                         .foregroundColor(.blue)
                                 }
                             }
@@ -269,11 +210,11 @@ struct FileBrowserView: View {
                 }
 
                 // File list
-                if isLoading {
+                if viewModel.isLoading {
                     Spacer()
                     ProgressView("Loading...")
                     Spacer()
-                } else if entries.isEmpty {
+                } else if viewModel.entries.isEmpty {
                     Spacer()
                     VStack(spacing: 12) {
                         Image(systemName: "folder")
@@ -284,8 +225,8 @@ struct FileBrowserView: View {
                     }
                     Spacer()
                 } else {
-                    List(entries) { entry in
-                        Button(action: { handleTap(entry) }) {
+                    List(viewModel.entries) { entry in
+                        Button(action: { viewModel.handleTap(entry) }) {
                             HStack {
                                 Image(systemName: entry.icon)
                                     .foregroundColor(entry.isDirectory ? .blue : .primary)
@@ -316,57 +257,65 @@ struct FileBrowserView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: { showingConnection = true }) {
+                    Button(action: { viewModel.disconnect() }) {
                         Image(systemName: "xmark.circle.fill")
                     }
                 }
+                #if os(iOS)
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        print("📤 [UI] Upload button tapped")
+                        viewModel.showingDocumentPicker = true
+                        print("📤 [UI] showingDocumentPicker set to true")
+                    }) {
+                        Label("Upload", systemImage: "arrow.up.doc")
+                    }
+                    .disabled(viewModel.isUploading)
+                }
+                #endif
             }
-            .sheet(item: $selectedFile) { file in
-                FileViewerView(file: file, client: client, currentPath: currentPath)
+            .sheet(item: $viewModel.selectedFile) { file in
+                FileViewerView(file: file, viewModel: viewModel)
+            }
+            #if os(iOS)
+            .sheet(isPresented: $viewModel.showingDocumentPicker) {
+                print("📤 [UI] DocumentPicker sheet appearing")
+                return DocumentPicker { url in
+                    print("📤 [UI] File selected: \(url.lastPathComponent)")
+                    Task {
+                        await viewModel.uploadFile(from: url)
+                    }
+                }
+            }
+            #endif
+            .alert("Upload Error", isPresented: .constant(viewModel.uploadError != nil), actions: {
+                Button("OK") { viewModel.uploadError = nil }
+            }, message: {
+                if let error = viewModel.uploadError {
+                    Text(error)
+                }
+            })
+            .overlay {
+                if viewModel.isUploading {
+                    ZStack {
+                        Color.black.opacity(0.3)
+                            .ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                            Text("Uploading...")
+                                .foregroundColor(.white)
+                                .font(.headline)
+                        }
+                        .padding(30)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                    }
+                }
             }
             .task {
-                await loadDirectory()
+                await viewModel.loadDirectory()
             }
-        }
-    }
-
-    private func loadDirectory() async {
-        isLoading = true
-
-        do {
-            entries = try await client.listDirectory(path: currentPath)
-        } catch {
-            print("Error loading directory: \(error)")
-        }
-
-        isLoading = false
-    }
-
-    private func handleTap(_ entry: FileEntry) {
-        if entry.isDirectory {
-            currentPath = currentPath == "/" ? "/\(entry.name)" : "\(currentPath)/\(entry.name)"
-            pathComponents.append(entry.name)
-            Task {
-                await loadDirectory()
-            }
-        } else {
-            selectedFile = entry
-        }
-    }
-
-    private func navigateToRoot() {
-        currentPath = "/"
-        pathComponents = []
-        Task {
-            await loadDirectory()
-        }
-    }
-
-    private func navigateTo(index: Int) {
-        pathComponents = Array(pathComponents.prefix(index + 1))
-        currentPath = "/" + pathComponents.joined(separator: "/")
-        Task {
-            await loadDirectory()
         }
     }
 }
@@ -375,13 +324,30 @@ struct FileBrowserView: View {
 
 struct FileViewerView: View {
     let file: FileEntry
-    @ObservedObject var client: NinePClient
-    let currentPath: String
+    @ObservedObject var viewModel: NinePViewModel
 
     @State private var content: String = ""
+    @State private var editedContent: String = ""
+    @State private var fileData: Data?
     @State private var isLoading = true
     @State private var error: String?
+    @State private var showingShareSheet = false
+    @State private var isEditMode = false
+    @State private var isSaving = false
+    @State private var showingDiscardAlert = false
     @Environment(\.dismiss) private var dismiss
+
+    private var isModified: Bool {
+        isEditMode && editedContent != content
+    }
+
+    private var characterCount: Int {
+        editedContent.count
+    }
+
+    private var lineCount: Int {
+        editedContent.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
 
     var body: some View {
         NavigationView {
@@ -397,23 +363,112 @@ struct FileViewerView: View {
                             .foregroundColor(.secondary)
                     }
                 } else {
-                    ScrollView {
-                        Text(content)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
+                    VStack(spacing: 0) {
+                        // Content area
+                        if isEditMode {
+                            TextEditor(text: $editedContent)
+                                .font(.system(.body, design: .monospaced))
+                                .padding(8)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                        } else {
+                            ScrollView {
+                                Text(content)
+                                    .font(.system(.body, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding()
+                            }
+                        }
+
+                        // Status bar for edit mode
+                        if isEditMode {
+                            HStack {
+                                Text("\(lineCount) lines")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                if isModified {
+                                    Text("Modified")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                        .fontWeight(.medium)
+                                    Spacer()
+                                }
+                                Text("\(characterCount) chars")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            .background(Color(.systemGray6))
+                        }
                     }
                 }
             }
             .navigationTitle(file.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if isEditMode {
+                        Button("Cancel") {
+                            if isModified {
+                                showingDiscardAlert = true
+                            } else {
+                                isEditMode = false
+                            }
+                        }
+                    } else {
+                        #if os(iOS)
+                        if fileData != nil {
+                            Button(action: { showingShareSheet = true }) {
+                                Image(systemName: "square.and.arrow.up")
+                            }
+                        }
+                        #endif
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+                    if isEditMode {
+                        Button(action: { Task { await saveFile() } }) {
+                            if isSaving {
+                                ProgressView()
+                            } else {
+                                Text("Save")
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .disabled(!isModified || isSaving)
+                    } else if !isLoading && error == nil {
+                        Menu {
+                            Button(action: { enterEditMode() }) {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                            Button(action: { dismiss() }) {
+                                Label("Done", systemImage: "xmark")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
                     }
                 }
             }
+            #if os(iOS)
+            .sheet(isPresented: $showingShareSheet) {
+                if let data = fileData {
+                    ShareSheet(items: [createTemporaryFile(data: data, filename: file.name)])
+                }
+            }
+            #endif
+            .alert("Discard Changes?", isPresented: $showingDiscardAlert) {
+                Button("Keep Editing", role: .cancel) {}
+                Button("Discard", role: .destructive) {
+                    editedContent = content
+                    isEditMode = false
+                }
+            } message: {
+                Text("You have unsaved changes. Are you sure you want to discard them?")
+            }
+            .interactiveDismissDisabled(isModified)
             .task {
                 await loadFile()
             }
@@ -422,12 +477,12 @@ struct FileViewerView: View {
 
     private func loadFile() async {
         do {
-            let filePath = currentPath == "/" ? "/\(file.name)" : "\(currentPath)/\(file.name)"
-            print("📄 [FileViewer] Loading file at path: \(filePath)")
-            let data = try await client.readFile(path: filePath)
+            let data = try await viewModel.readFile(file)
+            fileData = data
 
             if let text = String(data: data, encoding: .utf8) {
                 content = text
+                editedContent = text
             } else {
                 error = "File is not valid UTF-8 text"
             }
@@ -437,9 +492,88 @@ struct FileViewerView: View {
 
         isLoading = false
     }
+
+    private func enterEditMode() {
+        editedContent = content
+        isEditMode = true
+    }
+
+    private func saveFile() async {
+        isSaving = true
+
+        do {
+            let filePath = viewModel.currentPath == "/" ? "/\(file.name)" : "\(viewModel.currentPath)/\(file.name)"
+            let data = editedContent.data(using: .utf8) ?? Data()
+
+            try await viewModel.writeFile(path: filePath, data: data)
+
+            // Update the content to reflect saved state
+            content = editedContent
+            fileData = data
+            isEditMode = false
+
+            print("✅ [FileViewer] File saved successfully")
+        } catch {
+            print("❌ [FileViewer] Save failed: \(error)")
+            self.error = "Failed to save: \(error.localizedDescription)"
+        }
+
+        isSaving = false
+    }
+
+    private func createTemporaryFile(data: Data, filename: String) -> URL {
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent(filename)
+        try? data.write(to: fileURL)
+        return fileURL
+    }
 }
 
-import CoreBluetooth
+// MARK: - iOS-Only Helper Views
+
+#if os(iOS)
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+struct DocumentPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data, .text, .image, .pdf], asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL) -> Void
+
+        init(onPick: @escaping (URL) -> Void) {
+            self.onPick = onPick
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { return }
+            onPick(url)
+        }
+    }
+}
+#endif
+
+// MARK: - Preview
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {

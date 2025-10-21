@@ -16,6 +16,9 @@ class L2CAPTransport: NSObject, NinePTransport, ObservableObject {
     private var discoveredPeripheralIDs = Set<UUID>()
     private let psm: UInt16
 
+    // 9P Service UUID to filter devices
+    private let ninePServiceUUID = CBUUID(string: "39500001-FEED-4A91-BA88-A1E0F6E4C001")
+
     // RX State Machine
     private var rxBuffer = Data()
     private var rxState: RXState = .waitingForSize
@@ -31,7 +34,8 @@ class L2CAPTransport: NSObject, NinePTransport, ObservableObject {
     init(psm: UInt16 = 0x0009) {
         self.psm = psm
         super.init()
-        centralManager = CBCentralManager(delegate: self, queue: nil)
+        // Use main queue for CBCentralManager to ensure proper run loop
+        centralManager = CBCentralManager(delegate: self, queue: .main)
     }
 
     // MARK: - NinePTransport Protocol
@@ -48,31 +52,40 @@ class L2CAPTransport: NSObject, NinePTransport, ObservableObject {
     }
 
     func disconnect() {
+        print("🔴 [L2CAP] Disconnecting from peripheral...")
         if let peripheral = connectedPeripheral {
+            print("🔴 [L2CAP] Cancelling connection to: \(peripheral.name ?? "Unknown")")
             centralManager.cancelPeripheralConnection(peripheral)
         }
         closeL2CAPChannel()
         connectedPeripheral = nil
         connectionState = "Disconnected"
+        print("✅ [L2CAP] Disconnected")
     }
 
     func send(data: Data) {
         guard let channel = l2capChannel else {
-            print("No L2CAP channel open")
+            print("❌ [L2CAP] No L2CAP channel open")
             return
         }
 
         guard let outputStream = channel.outputStream else {
-            print("Output stream not available")
+            print("❌ [L2CAP] Output stream not available")
             return
         }
 
+        print("📤 [L2CAP] Sending \(data.count) bytes")
         data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
             guard let baseAddress = buffer.baseAddress else { return }
-            _ = outputStream.write(
+            let bytesWritten = outputStream.write(
                 baseAddress.assumingMemoryBound(to: UInt8.self),
                 maxLength: data.count
             )
+            if bytesWritten == data.count {
+                print("✅ [L2CAP] Successfully sent \(bytesWritten) bytes")
+            } else {
+                print("⚠️ [L2CAP] Sent \(bytesWritten) bytes (expected \(data.count))")
+            }
         }
     }
 
@@ -85,7 +98,8 @@ class L2CAPTransport: NSObject, NinePTransport, ObservableObject {
         discoveredPeripheralIDs.removeAll()
         isScanning = true
 
-        centralManager.scanForPeripherals(withServices: nil, options: [
+        print("🔍 [BLE] Starting scan for 9P service: \(ninePServiceUUID)")
+        centralManager.scanForPeripherals(withServices: [ninePServiceUUID], options: [
             CBCentralManagerScanOptionAllowDuplicatesKey: false
         ])
     }
@@ -170,6 +184,17 @@ extension L2CAPTransport: CBCentralManagerDelegate {
                        rssi RSSI: NSNumber) {
         guard !discoveredPeripheralIDs.contains(peripheral.identifier) else { return }
 
+        // Get name from scan response data (CBAdvertisementDataLocalNameKey) or peripheral.name fallback
+        let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let deviceName = localName ?? peripheral.name ?? "Unknown"
+
+        print("🔍 [BLE] Discovered: \(deviceName) - \(peripheral.identifier)")
+        if localName != nil {
+            print("   └─ Name from scan response data: \(localName!)")
+        } else if peripheral.name != nil {
+            print("   └─ Name from peripheral: \(peripheral.name!)")
+        }
+
         discoveredPeripheralIDs.insert(peripheral.identifier)
         DispatchQueue.main.async {
             self.discoveredPeripherals.append(peripheral)
@@ -177,15 +202,22 @@ extension L2CAPTransport: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        print("✅ [BLE] Connected to peripheral: \(peripheral.name ?? "Unknown")")
         peripheral.delegate = self
-        connectionState = "Opening L2CAP..."
+        DispatchQueue.main.async {
+            self.connectionState = "Opening L2CAP..."
+        }
+        print("🔌 [BLE] Opening L2CAP channel on PSM: \(self.psm)")
         peripheral.openL2CAPChannel(psm)
     }
 
     func centralManager(_ central: CBCentralManager,
                        didDisconnectPeripheral peripheral: CBPeripheral,
                        error: Error?) {
-        connectionState = "Disconnected"
+        print("⚠️ [BLE] Disconnected from peripheral: \(error?.localizedDescription ?? "No error")")
+        DispatchQueue.main.async {
+            self.connectionState = "Disconnected"
+        }
         closeL2CAPChannel()
         delegate?.transport(self, didDisconnectWithError: error)
     }
@@ -193,7 +225,10 @@ extension L2CAPTransport: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager,
                        didFailToConnect peripheral: CBPeripheral,
                        error: Error?) {
-        connectionState = "Failed"
+        print("❌ [BLE] Failed to connect: \(error?.localizedDescription ?? "Unknown error")")
+        DispatchQueue.main.async {
+            self.connectionState = "Failed"
+        }
         connectContinuation?.resume(throwing: error ?? TransportError.connectionFailed)
         connectContinuation = nil
     }
@@ -203,31 +238,46 @@ extension L2CAPTransport: CBCentralManagerDelegate {
 
 extension L2CAPTransport: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
+        print("🔌 [BLE] didOpen L2CAP channel callback received")
+
         if let error = error {
-            print("Failed to open L2CAP: \(error)")
+            print("❌ [BLE] Failed to open L2CAP: \(error)")
+            DispatchQueue.main.async {
+                self.connectionState = "L2CAP Failed"
+            }
             connectContinuation?.resume(throwing: error)
             connectContinuation = nil
             return
         }
 
         guard let channel = channel else {
+            print("❌ [BLE] L2CAP channel is nil")
+            DispatchQueue.main.async {
+                self.connectionState = "Channel Failed"
+            }
             connectContinuation?.resume(throwing: TransportError.channelFailed)
             connectContinuation = nil
             return
         }
 
+        print("✅ [BLE] L2CAP channel opened successfully, PSM: \(channel.psm)")
         l2capChannel = channel
 
-        channel.inputStream.delegate = self
-        channel.outputStream.delegate = self
-        channel.inputStream.schedule(in: .current, forMode: .default)
-        channel.outputStream.schedule(in: .current, forMode: .default)
-        channel.inputStream.open()
-        channel.outputStream.open()
+        // Schedule streams on main thread to avoid priority inversion
+        DispatchQueue.main.async {
+            channel.inputStream.delegate = self
+            channel.outputStream.delegate = self
+            channel.inputStream.schedule(in: .main, forMode: .default)
+            channel.outputStream.schedule(in: .main, forMode: .default)
+            channel.inputStream.open()
+            channel.outputStream.open()
 
-        connectionState = "Connected"
-        connectContinuation?.resume()
-        connectContinuation = nil
+            print("✅ [BLE] Streams opened, resuming continuation")
+            self.connectionState = "Connected"
+            self.connectContinuation?.resume()
+            self.connectContinuation = nil
+            print("✅ [BLE] Connection complete!")
+        }
     }
 }
 
@@ -235,6 +285,7 @@ extension L2CAPTransport: CBPeripheralDelegate {
 
 extension L2CAPTransport: StreamDelegate {
     func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
+        print("📨 [L2CAP] Stream event: \(eventCode)")
         switch eventCode {
         case .hasBytesAvailable:
             guard let inputStream = aStream as? InputStream else { return }
@@ -243,22 +294,26 @@ extension L2CAPTransport: StreamDelegate {
             var buffer = [UInt8](repeating: 0, count: bufferSize)
             let bytesRead = inputStream.read(&buffer, maxLength: bufferSize)
 
+            print("📥 [L2CAP] Read \(bytesRead) bytes from stream")
             if bytesRead > 0 {
                 rxBuffer.append(Data(buffer[..<bytesRead]))
+                print("📥 [L2CAP] RX buffer now has \(rxBuffer.count) bytes")
                 processRxBuffer()
             }
 
         case .errorOccurred:
             if let error = aStream.streamError {
-                print("Stream error: \(error)")
+                print("❌ [L2CAP] Stream error: \(error)")
                 delegate?.transport(self, didDisconnectWithError: error)
             }
 
         case .endEncountered:
+            print("⚠️ [L2CAP] Stream end encountered")
             closeL2CAPChannel()
             delegate?.transport(self, didDisconnectWithError: nil)
 
         default:
+            print("📨 [L2CAP] Other stream event: \(eventCode)")
             break
         }
     }

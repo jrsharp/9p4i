@@ -176,6 +176,19 @@ struct NinePMessage {
         return Data(payload[startIndex..<endIndex])
     }
 
+    // Parse write response count
+    var writeCount: UInt32? {
+        guard type == .rwrite else { return nil }
+        guard payload.count >= 4 else {
+            print("⚠️ writeCount: payload too small (\(payload.count) bytes)")
+            return nil
+        }
+
+        let count = payload.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self) }
+        print("📊 writeCount: count=\(count)")
+        return count
+    }
+
     // Description for logging
     var description: String {
         var desc = "\(type.name) tag=\(tag) size=\(size)"
@@ -290,6 +303,39 @@ struct NinePMessageBuilder {
         data.append(contentsOf: withUnsafeBytes(of: fid.littleEndian, Array.init))
         data.append(contentsOf: withUnsafeBytes(of: offset.littleEndian, Array.init))
         data.append(contentsOf: withUnsafeBytes(of: count.littleEndian, Array.init))
+
+        return data
+    }
+
+    static func buildWrite(tag: UInt16, fid: UInt32, offset: UInt64, writeData: Data) -> Data {
+        var data = Data()
+        let size: UInt32 = 4 + 1 + 2 + 4 + 8 + 4 + UInt32(writeData.count)
+
+        data.append(contentsOf: withUnsafeBytes(of: size.littleEndian, Array.init))
+        data.append(NinePMessageType.twrite.rawValue)
+        data.append(contentsOf: withUnsafeBytes(of: tag.littleEndian, Array.init))
+        data.append(contentsOf: withUnsafeBytes(of: fid.littleEndian, Array.init))
+        data.append(contentsOf: withUnsafeBytes(of: offset.littleEndian, Array.init))
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(writeData.count).littleEndian, Array.init))
+        data.append(writeData)
+
+        return data
+    }
+
+    static func buildCreate(tag: UInt16, fid: UInt32, name: String, perm: UInt32, mode: UInt8) -> Data {
+        var data = Data()
+
+        let nameData = name.data(using: .utf8) ?? Data()
+        let size: UInt32 = 4 + 1 + 2 + 4 + 2 + UInt32(nameData.count) + 4 + 1
+
+        data.append(contentsOf: withUnsafeBytes(of: size.littleEndian, Array.init))
+        data.append(NinePMessageType.tcreate.rawValue)
+        data.append(contentsOf: withUnsafeBytes(of: tag.littleEndian, Array.init))
+        data.append(contentsOf: withUnsafeBytes(of: fid.littleEndian, Array.init))
+        data.append(contentsOf: withUnsafeBytes(of: UInt16(nameData.count).littleEndian, Array.init))
+        data.append(nameData)
+        data.append(contentsOf: withUnsafeBytes(of: perm.littleEndian, Array.init))
+        data.append(mode)
 
         return data
     }

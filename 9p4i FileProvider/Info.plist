@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>9p4i FileProvider</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.9p4i.FileProvider</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionFileProviderDocumentGroup</key>
+		<string>9P Server</string>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.fileprovider-nonreplicated</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).FileProviderExtension</string>
+	</dict>
+</dict>
+</plist>

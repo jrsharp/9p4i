@@ -20,7 +20,7 @@ class NinePClient: ObservableObject {
         self.transport = transport
         transport.delegate = self
 
-        try await transport.connect()
+        // Transport is already connected by the ViewModel, just do 9P handshake
         try await version()
         try await attach()
 
@@ -179,6 +179,84 @@ class NinePClient: ObservableObject {
         return fileData
     }
 
+    func writeFile(path: String, data: Data) async throws {
+        print("✏️ [WriteFile] Starting for path=\"\(path)\", data.count=\(data.count)")
+
+        // Split path into directory and filename
+        let components = path.split(separator: "/").map(String.init)
+        guard !components.isEmpty else {
+            throw NinePError.protocolError("Invalid file path")
+        }
+
+        let filename = components.last!
+        let dirComponents = Array(components.dropLast())
+
+        print("✏️ [WriteFile] dirComponents=\(dirComponents), filename=\"\(filename)\"")
+
+        // Walk to parent directory
+        let dirFid = allocateFid()
+        let tag1 = allocateTag()
+        let walkMsg1 = NinePMessageBuilder.buildWalk(tag: tag1, fid: rootFid, newFid: dirFid, wnames: dirComponents)
+        let _ = try await sendRequest(walkMsg1, tag: tag1)
+
+        print("✏️ [WriteFile] Got dirFid=\(dirFid)")
+
+        // Try to walk to the file (check if it exists)
+        let fileFid = allocateFid()
+        let tag2 = allocateTag()
+        let walkMsg2 = NinePMessageBuilder.buildWalk(tag: tag2, fid: dirFid, newFid: fileFid, wnames: [filename])
+        print("✏️ [WriteFile] Walking to file \(filename) to check if it exists...")
+        let walkResponse = try await sendRequest(walkMsg2, tag: tag2)
+
+        let fileExists = walkResponse.type == .rwalk
+        print("✏️ [WriteFile] File exists check: \(fileExists) (response type: \(walkResponse.type.name))")
+        let writeFid: UInt32
+
+        if fileExists {
+            print("✏️ [WriteFile] File exists, opening for write")
+            // File exists, open it for writing with truncate (mode 0x11 = OWRITE | OTRUNC)
+            try await open(fid: fileFid, mode: 0x11)
+            writeFid = fileFid
+        } else {
+            print("✏️ [WriteFile] File doesn't exist, creating it")
+            // Create the file (mode 1 = OWRITE, perm 0644 = 0x1B4)
+            try await create(fid: dirFid, name: filename, perm: 0x1B4, mode: 1)
+            // After create, dirFid becomes the opened file
+            writeFid = dirFid
+            // Clean up the unused fileFid since walk failed
+            // (No need to clunk, the walk failed so fileFid was never established)
+        }
+
+        defer {
+            Task {
+                print("✏️ [WriteFile] Clunking writeFid=\(writeFid)")
+                try? await clunk(fid: writeFid)
+                if fileExists && dirFid != writeFid {
+                    print("✏️ [WriteFile] Clunking dirFid=\(dirFid)")
+                    try? await clunk(fid: dirFid)
+                }
+            }
+        }
+
+        // Write data in chunks
+        var offset: UInt64 = 0
+        let chunkSize = Int(msize - 32) // Leave room for headers
+
+        while offset < data.count {
+            let end = min(Int(offset) + chunkSize, data.count)
+            let chunk = data[Int(offset)..<end]
+
+            let written = try await write(fid: writeFid, offset: offset, data: chunk)
+            guard written == chunk.count else {
+                throw NinePError.protocolError("Partial write: expected \(chunk.count), got \(written)")
+            }
+
+            offset += UInt64(written)
+        }
+
+        print("✏️ [WriteFile] Done, wrote \(offset) total bytes")
+    }
+
     private func walkPath(_ path: String) async throws -> UInt32 {
         let components = path.split(separator: "/").map(String.init)
 
@@ -220,7 +298,8 @@ class NinePClient: ObservableObject {
 
     private func open(fid: UInt32, mode: UInt8) async throws {
         let tag = allocateTag()
-        print("📂 [Open] fid=\(fid), mode=\(mode), tag=\(tag)")
+        let modeString = mode == 0 ? "OREAD" : mode == 1 ? "OWRITE" : mode == 2 ? "ORDWR" : mode == 0x11 ? "OWRITE|OTRUNC" : "0x\(String(mode, radix: 16))"
+        print("📂 [Open] fid=\(fid), mode=\(modeString) (0x\(String(mode, radix: 16))), tag=\(tag)")
 
         let msg = NinePMessageBuilder.buildOpen(tag: tag, fid: fid, mode: mode)
 
@@ -231,6 +310,7 @@ class NinePClient: ObservableObject {
                 print("❌ [Open] failed: \(error)")
                 throw NinePError.serverError(error)
             }
+            print("❌ [Open] unexpected response: \(response.type.name)")
             throw NinePError.protocolError("Expected R-open")
         }
 
@@ -256,6 +336,46 @@ class NinePClient: ObservableObject {
         let data = response.readData ?? Data()
         print("✅ [Read] got \(data.count) bytes")
         return data
+    }
+
+    private func write(fid: UInt32, offset: UInt64, data: Data) async throws -> UInt32 {
+        let tag = allocateTag()
+        print("✏️ [Write] fid=\(fid), offset=\(offset), count=\(data.count), tag=\(tag)")
+
+        let msg = NinePMessageBuilder.buildWrite(tag: tag, fid: fid, offset: offset, writeData: data)
+
+        let response = try await sendRequest(msg, tag: tag)
+
+        guard response.type == .rwrite else {
+            if response.type == .rerror, let error = response.errorString {
+                print("❌ [Write] failed: \(error)")
+                throw NinePError.serverError(error)
+            }
+            throw NinePError.protocolError("Expected R-write")
+        }
+
+        let count = response.writeCount ?? 0
+        print("✅ [Write] wrote \(count) bytes")
+        return count
+    }
+
+    private func create(fid: UInt32, name: String, perm: UInt32, mode: UInt8) async throws {
+        let tag = allocateTag()
+        print("📝 [Create] fid=\(fid), name=\"\(name)\", perm=0x\(String(perm, radix: 16)), mode=\(mode), tag=\(tag)")
+
+        let msg = NinePMessageBuilder.buildCreate(tag: tag, fid: fid, name: name, perm: perm, mode: mode)
+
+        let response = try await sendRequest(msg, tag: tag)
+
+        guard response.type == .rcreate else {
+            if response.type == .rerror, let error = response.errorString {
+                print("❌ [Create] failed: \(error)")
+                throw NinePError.serverError(error)
+            }
+            throw NinePError.protocolError("Expected R-create")
+        }
+
+        print("✅ [Create] success")
     }
 
     private func clunk(fid: UInt32) async throws {
