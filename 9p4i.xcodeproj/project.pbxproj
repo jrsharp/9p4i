@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		019E57E42F04B67000EC607A /* DFUManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A /* DFUManager.swift */; };
+		019E57E52F04B68B00EC607A /* DFUView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000B /* DFUView.swift */; };
 		01A1F4782EA690D9000A8D0B /* 9PFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 01F4D8702EA5ECDF00C65B53 /* 9PFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		01A1F47C2EA690FC000A8D0B /* NinePClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000004 /* NinePClient.swift */; };
 		01A1F47D2EA69102000A8D0B /* L2CAPTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000005 /* L2CAPTransport.swift */; };
@@ -29,6 +31,8 @@
 		A1000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000006 /* Assets.xcassets */; };
 		A1000007 /* TCPTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000008 /* TCPTransport.swift */; };
 		A1000009 /* LaunchScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000009 /* LaunchScreenView.swift */; };
+		A100000A /* DFUManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A /* DFUManager.swift */; };
+		A100000B /* DFUView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000B /* DFUView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -104,6 +108,8 @@
 		A2000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2000008 /* TCPTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPTransport.swift; sourceTree = "<group>"; };
 		A2000009 /* LaunchScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreenView.swift; sourceTree = "<group>"; };
+		A200000A /* DFUManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DFUManager.swift; sourceTree = "<group>"; };
+		A200000B /* DFUView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DFUView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -191,6 +197,8 @@
 				A2000001 /* App.swift */,
 				A2000002 /* ContentView.swift */,
 				A2000009 /* LaunchScreenView.swift */,
+				A200000A /* DFUManager.swift */,
+				A200000B /* DFUView.swift */,
 				A2000003 /* NinePMessage.swift */,
 				A2000004 /* NinePClient.swift */,
 				A2000005 /* L2CAPTransport.swift */,
@@ -423,7 +431,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				019E57E42F04B67000EC607A /* DFUManager.swift in Sources */,
 				01A1F47C2EA690FC000A8D0B /* NinePClient.swift in Sources */,
+				019E57E52F04B68B00EC607A /* DFUView.swift in Sources */,
 				01A1F4802EA69166000A8D0B /* LaunchScreenView.swift in Sources */,
 				01A1F47F2EA6910D000A8D0B /* NinePMessage.swift in Sources */,
 				01DED3192EA6A20000A583C7 /* NinePViewModel.swift in Sources */,
@@ -464,6 +474,8 @@
 				A1000001 /* App.swift in Sources */,
 				A1000002 /* ContentView.swift in Sources */,
 				A1000009 /* LaunchScreenView.swift in Sources */,
+				A100000A /* DFUManager.swift in Sources */,
+				A100000B /* DFUView.swift in Sources */,
 				A1000003 /* NinePMessage.swift in Sources */,
 				A1000004 /* NinePClient.swift in Sources */,
 				01DED31A2EA6A20000A583C7 /* NinePViewModel.swift in Sources */,

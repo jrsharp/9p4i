@@ -31,7 +31,7 @@ class L2CAPTransport: NSObject, NinePTransport, ObservableObject {
 
     private var connectContinuation: CheckedContinuation<Void, Error>?
 
-    init(psm: UInt16 = 0x0009) {
+    init(psm: UInt16 = 0x0080) {
         self.psm = psm
         super.init()
         // Use main queue for CBCentralManager to ensure proper run loop

@@ -7,6 +7,7 @@ class NinePViewModel: ObservableObject {
     // MARK: - Properties
 
     @Published var client = NinePClient()
+    @Published var dfuManager = DFUManager()
 
     // Connection state
     @Published var showingConnection = true
@@ -29,6 +30,9 @@ class NinePViewModel: ObservableObject {
     @Published var isUploading = false
     @Published var uploadError: String?
 
+    // DFU state
+    @Published var showingDFU = false
+
     private var cancellables = Set<AnyCancellable>()
 
     enum ConnectionMode {
@@ -44,6 +48,13 @@ class NinePViewModel: ObservableObject {
         client.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
+
+        dfuManager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+
+        // Give DFU manager access to the client
+        dfuManager.setClient(client)
     }
 
     // MARK: - Connection Methods
@@ -61,7 +72,7 @@ class NinePViewModel: ObservableObject {
                 try await l2capTransport.connect()
 
                 print("🔵 [ViewModel] Connecting 9P client...")
-                try await client.connect(transport: l2capTransport)
+                try await client.connect(transport: l2capTransport, username: "guest")
 
                 print("✅ [ViewModel] Connection successful!")
                 isConnecting = false
@@ -87,7 +98,7 @@ class NinePViewModel: ObservableObject {
 
         Task {
             do {
-                try await client.connect(transport: tcpTransport)
+                try await client.connect(transport: tcpTransport, username: "guest")
                 showingConnection = false
             } catch {
                 connectionError = error.localizedDescription

@@ -263,14 +263,22 @@ struct FileBrowserView: View {
                 }
                 #if os(iOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        print("📤 [UI] Upload button tapped")
-                        viewModel.showingDocumentPicker = true
-                        print("📤 [UI] showingDocumentPicker set to true")
-                    }) {
-                        Label("Upload", systemImage: "arrow.up.doc")
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            viewModel.showingDFU = true
+                        }) {
+                            Label("Firmware", systemImage: "cpu")
+                        }
+
+                        Button(action: {
+                            print("📤 [UI] Upload button tapped")
+                            viewModel.showingDocumentPicker = true
+                            print("📤 [UI] showingDocumentPicker set to true")
+                        }) {
+                            Label("Upload", systemImage: "arrow.up.doc")
+                        }
+                        .disabled(viewModel.isUploading)
                     }
-                    .disabled(viewModel.isUploading)
                 }
                 #endif
             }
@@ -286,6 +294,9 @@ struct FileBrowserView: View {
                         await viewModel.uploadFile(from: url)
                     }
                 }
+            }
+            .sheet(isPresented: $viewModel.showingDFU) {
+                DFUView(dfuManager: viewModel.dfuManager)
             }
             #endif
             .alert("Upload Error", isPresented: .constant(viewModel.uploadError != nil), actions: {
